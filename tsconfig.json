@@ -1,0 +1,34 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ESNext"],
+		"types": ["bun-types"],
+		"strict": true,
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"allowJs": true,
+		"resolveJsonModule": true,
+		"noEmit": true,
+		"verbatimModuleSyntax": true,
+		"paths": {
+			"@app": ["./src"],
+			"@config": ["./src/config.ts"],
+			"@connections": ["./src/connections"],
+			"@connections/*": ["./src/connections/*"],
+			"@db/*": ["./src/db/*"],
+			"@enums/*": ["./src/enums/*"],
+			"@middlewares/*": ["./src/middlewares/*"],
+			"@schema/*": ["./src/schema/*"],
+			"@services": ["./src/services"],
+			"@services/*": ["./src/services/*"],
+			"@utils": ["./src/utils"],
+			"@utils/*": ["./src/utils/*"],
+			"@api": ["./src/api"],
+			"@api/*": ["./src/api/*"],
+			"@tests/*": ["./tests/*"]
+		}
+	},
+	"include": ["src/**/*.ts", "tests/**/*.ts"]
+}
