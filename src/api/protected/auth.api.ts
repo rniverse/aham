@@ -23,8 +23,8 @@ export const authAPI = new Elysia({ prefix: '/auth' })
 		async ({ body, user }) => {
 			const _user = await service$auth.password.change(
 				user.sub,
-				body.currentPassword,
-				body.nextPassword,
+				body.current,
+				body.next,
 			);
 			return ok(sanitize(_user));
 		},

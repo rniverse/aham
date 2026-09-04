@@ -200,8 +200,8 @@ export function mockGoogleOAuth(profile: {
 	}) as typeof fetch);
 }
 
-export const stateFromLocation = (location: string | null) =>
-	new URL(location ?? '').searchParams.get('state') ?? '';
+export const stateFromUrl = (url: string | null) =>
+	new URL(url ?? '').searchParams.get('state') ?? '';
 
 /**
  * Run the whole start -> callback OAuth dance with a stubbed provider fetch,
@@ -225,7 +225,8 @@ export async function oauthFlow(
 		const start = await app.handle(
 			new Request(`http://localhost/api/oauth/${provider}/start`),
 		);
-		const state = stateFromLocation(start.headers.get('location'));
+		const { redirect } = await start.json() as { redirect: string };
+		const state = stateFromUrl(redirect);
 		const cb = await app.handle(
 			new Request(
 				`http://localhost/api/oauth/${provider}/callback?code=fake&state=${state}`,

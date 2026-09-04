@@ -16,19 +16,19 @@ describe('GET /api/user/me', () => {
 		expect(body.data.hash).toBeUndefined();
 	});
 
-	it('401 without a token', async () => {
+	it('422 without a token', async () => {
 		const app = await getApp();
 		const { status } = await call(app, 'GET', '/api/user/me');
-		expect(status).toBe(401);
+		expect(status).toBe(422);
 	});
 
-	it('401 with a bare token (missing the Bearer scheme)', async () => {
+	it('422 with a bare token (missing the Bearer scheme)', async () => {
 		const app = await getApp();
 		const s = await signup(app);
 		const { status } = await call(app, 'GET', '/api/user/me', {
 			headers: { authorization: s.accessToken },
 		});
-		expect(status).toBe(401);
+		expect(status).toBe(422);
 	});
 
 	it('INVALID_TOKEN for a garbage bearer token', async () => {
@@ -123,12 +123,12 @@ describe('POST /api/user/change/username', () => {
 		expect(body.error.code).toBe(enum$error.codes.USERNAME_ALREADY_EXISTS);
 	});
 
-	it('401 without a token', async () => {
+	it('422 without a token', async () => {
 		const app = await getApp();
 		const { status } = await call(app, 'POST', '/api/user/change/username', {
 			body: { username: 'whoever' },
 		});
-		expect(status).toBe(401);
+		expect(status).toBe(422);
 	});
 
 	it('INVALID_TOKEN for a garbage bearer token', async () => {

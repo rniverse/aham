@@ -5,25 +5,49 @@ import { eq } from 'drizzle-orm';
 import {
 	call,
 	getApp,
+	mockGoogleOAuth,
 	oauthFlow,
 	signup,
-	stateFromLocation,
+	stateFromUrl,
 	uniqueEmail,
 } from '../utils';
 
 describe('GET /api/oauth/:provider/start', () => {
-	it('redirects to the provider with the expected query params', async () => {
+	it('returns a google auth url with the expected query params', async () => {
 		const app = await getApp();
 		const res = await app.handle(
 			new Request('http://localhost/api/oauth/google/start'),
 		);
-		expect(res.status).toBe(302);
+		expect(res.status).toBe(200);
 
-		const url = new URL(res.headers.get('location') ?? '');
+		const { redirect } = await res.json() as { redirect: string };
+		const url = new URL(redirect);
 		expect(url.origin).toBe('https://accounts.google.com');
 		expect(url.searchParams.get('response_type')).toBe('code');
 		expect(url.searchParams.get('scope')).toContain('email');
-		expect(stateFromLocation(url.href).length).toBeGreaterThan(0);
+		expect(stateFromUrl(url.href).length).toBeGreaterThan(0);
+	});
+
+	it('callback redirects to the custom ?redirect= url when provided', async () => {
+		const app = await getApp();
+		const email = uniqueEmail('redir');
+		const custom = 'http://localhost:4000';
+		const spy = mockGoogleOAuth({ email });
+		try {
+			const start = await app.handle(
+				new Request(`http://localhost/api/oauth/google/start?redirect=${encodeURIComponent(custom)}`),
+			);
+			const { redirect } = await start.json() as { redirect: string };
+			const state = stateFromUrl(redirect);
+			const cb = await app.handle(
+				new Request(`http://localhost/api/oauth/google/callback?code=fake&state=${state}`),
+			);
+			const loc = new URL(cb.headers.get('location') ?? '');
+			expect(loc.origin).toBe(custom);
+			expect(loc.searchParams.get('code')).toBeTruthy();
+		} finally {
+			spy.mockRestore();
+		}
 	});
 
 	it('404 for an unknown provider', async () => {

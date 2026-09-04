@@ -30,26 +30,21 @@ async function consumeVerificationToken(
 	type: 'password_reset',
 ) {
 	const client = pg();
-	const tokenHash = await utils$token.digest(rawToken);
+	const hash = await utils$token.digest(rawToken);
 	const [row] = await client
-		.select()
-		.from(verification_tokens)
+		.update(verification_tokens)
+		.set({ used_at: new Date() })
 		.where(
 			and(
-				eq(verification_tokens.token_hash, tokenHash),
+				eq(verification_tokens.token_hash, hash),
 				eq(verification_tokens.type, type),
 				isNull(verification_tokens.used_at),
 				gt(verification_tokens.expires_at, new Date()),
 			),
 		)
-		.limit(1);
+		.returning();
 
 	if (!row) throw new AppError(enum$error.key.VERIFICATION_TOKEN_INVALID);
-
-	await client
-		.update(verification_tokens)
-		.set({ used_at: new Date() })
-		.where(eq(verification_tokens.id, row.id));
 	return row;
 }
 
@@ -111,14 +106,14 @@ const password = {
 		return user;
 	},
 
-	change: async (id: string, currentPassword: string, nextPassword: string) => {
+	change: async (id: string, current: string, next: string) => {
 		const user = await service$user.find({ id });
 		if (!user?.hash) throw new AppError(enum$error.key.NOT_FOUND);
 
-		const isValid = await utils$password.verify(currentPassword, user.hash);
+		const isValid = await utils$password.verify(current, user.hash);
 		if (!isValid) throw new AppError(enum$error.key.INVALID_CREDENTIALS);
 
-		const hash = await utils$password.hash(nextPassword);
+		const hash = await utils$password.hash(next);
 		// deliberately no revoke — change leaves other sessions alone
 		return service$user.update({ id }, { hash });
 	},
@@ -127,14 +122,15 @@ const password = {
 // --- oauth --------------------------------------------------------------
 
 const oauth = {
-	start: async (provider: string) => {
+	start: async (provider: string, redirect?: string) => {
 		const providerService = getProvider(provider);
-		const { url, state } = await providerService.start();
-		await service$cache.set(
-			`oauth:state:${state}`,
-			provider,
-			OAUTH_STATE_TTL_SECONDS,
-		);
+		let state: string;
+		let saved = false;
+		do {
+			state = utils$token.random(16);
+			saved = await service$cache.acquire(`oauth:state:${state}`, JSON.stringify({ provider, redirect }), OAUTH_STATE_TTL_SECONDS);
+		} while (!saved);
+		const url = providerService.start(state);
 		return { url };
 	},
 
@@ -146,10 +142,10 @@ const oauth = {
 	) => {
 		const providerService = getProvider(provider);
 
-		const cachedProvider = await service$cache.get(`oauth:state:${state}`);
-		if (!cachedProvider || cachedProvider !== provider)
+		const cached = await service$cache.pop(`oauth:state:${state}`);
+		const parsed = cached ? JSON.parse(cached) as { provider: string; redirect?: string } : null;
+		if (!parsed || parsed.provider !== provider)
 			throw new AppError(enum$error.key.OAUTH_STATE_MISMATCH);
-		await service$cache.del(`oauth:state:${state}`); // single-use
 
 		const profile = await providerService.callback(code);
 		let user = await service$user.find({ email: profile.email });
@@ -185,19 +181,18 @@ const oauth = {
 		// logs, and Referer headers would all see them). Instead: stash them
 		// behind a short-lived, single-use code, and hand the frontend only that.
 		const { tokens } = await service$session.issue(user, meta);
-		const exchangeCode = utils$token.random(16);
-		await service$cache.set(
-			`oauth:exchange:${exchangeCode}`,
-			JSON.stringify(tokens),
-			OAUTH_EXCHANGE_TTL_SECONDS,
-		);
-		return { code: exchangeCode };
+		let ticket: string;
+		let saved = false;
+		do {
+			ticket = utils$token.random(16);
+			saved = await service$cache.acquire(`oauth:exchange:${ticket}`, JSON.stringify(tokens), OAUTH_EXCHANGE_TTL_SECONDS);
+		} while (!saved);
+		return { code: ticket, redirect: parsed.redirect };
 	},
 
 	exchange: async (code: string) => {
-		const raw = await service$cache.get(`oauth:exchange:${code}`);
+		const raw = await service$cache.pop(`oauth:exchange:${code}`);
 		if (!raw) throw new AppError(enum$error.key.INVALID_TOKEN);
-		await service$cache.del(`oauth:exchange:${code}`);
 		return JSON.parse(raw) as { accessToken: string; refreshToken: string };
 	},
 };

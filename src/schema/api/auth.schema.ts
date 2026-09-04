@@ -20,8 +20,8 @@ export const schema$auth = {
 		forgot: t.object({ email }),
 		reset: t.object({ token: t.string(), password }),
 		change: t.object({
-			currentPassword: t.string(),
-			nextPassword: password,
+			current: t.string(),
+			next: password,
 		}),
 	},
 };

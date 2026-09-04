@@ -19,7 +19,11 @@ export const init = async () => {
 		.use(logger())
 		.error({ AppError })
 		.onError(({ error, code, set }) => {
-			log.error(error, 'Error occured during request processing');
+			if (code !== 'VALIDATION') {
+				log.error(error, 'Error occured during request processing');
+			} else {
+				log.error(error.all.map((e: any) => e.message), 'Error occured during request processing');
+			}
 			if (error instanceof AppError) {
 				set.status = error.status_code;
 				return {

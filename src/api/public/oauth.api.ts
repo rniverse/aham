@@ -1,29 +1,31 @@
 import { config } from '@config';
+import { schema$oauth } from '@schema/api/oauth.schema';
 import { AppError, service$auth } from '@services';
 import { metaOf, ok } from '@utils';
-import Elysia, { t } from 'elysia';
+import Elysia from 'elysia';
 
 export const oauthAPI = new Elysia({ prefix: '/oauth' })
 	.get(
 		'/:provider/start',
-		async ({ params, redirect }) => {
-			const { url } = await service$auth.oauth.start(params.provider);
-			return redirect(url);
+		async ({ params, query }) => {
+			const { url } = await service$auth.oauth.start(params.provider, query.redirect);
+			return { redirect: url };
 		},
-		{ params: t.Object({ provider: t.String() }) },
+		schema$oauth.start,
 	)
 	.get(
 		'/:provider/callback',
 		async ({ params, query, request, server, redirect }) => {
 			try {
-				const { code } = await service$auth.oauth.callback(
+				const result = await service$auth.oauth.callback(
 					params.provider,
 					query.code,
 					query.state,
 					metaOf(server, request),
 				);
-				const url = new URL(config.clientURL);
-				url.searchParams.set('code', code);
+				const base = result.redirect ?? config.clientURL;
+				const url = new URL(base);
+				url.searchParams.set('code', result.code);
 				return redirect(url.toString());
 			} catch (err) {
 				const url = new URL(config.clientURL);
@@ -34,10 +36,7 @@ export const oauthAPI = new Elysia({ prefix: '/oauth' })
 				return redirect(url.toString());
 			}
 		},
-		{
-			params: t.Object({ provider: t.String() }),
-			query: t.Object({ code: t.String(), state: t.String() }),
-		},
+		schema$oauth.callback,
 	)
 	.post(
 		'/exchange',
@@ -45,5 +44,5 @@ export const oauthAPI = new Elysia({ prefix: '/oauth' })
 			const data = await service$auth.oauth.exchange(body.code);
 			return ok(data);
 		},
-		{ body: t.Object({ code: t.String() }) },
+		schema$oauth.exchange,
 	);

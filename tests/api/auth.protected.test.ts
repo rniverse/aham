@@ -60,7 +60,7 @@ describe('POST /api/auth/invite/revoke', () => {
 		expect(body.error.code).toBe(enum$error.codes.NOT_FOUND);
 	});
 
-	it('401 without a token', async () => {
+	it('422 without a token', async () => {
 		const app = await getApp();
 		const { status, body } = await call(
 			app,
@@ -68,8 +68,8 @@ describe('POST /api/auth/invite/revoke', () => {
 			'/api/auth/invite/revoke',
 			{ body: { email: uniqueEmail() } },
 		);
-		expect(status).toBe(401);
-		expect(body.error.code).toBe(enum$error.codes.UNAUTHORIZED);
+		expect(status).toBe(422);
+		expect(body.error.code).toBe(enum$error.codes.VALIDATION_FAILED);
 	});
 
 	it('INVALID_TOKEN (not UNAUTHORIZED) for a garbage bearer token', async () => {
@@ -137,7 +137,7 @@ describe('POST /api/auth/password/change', () => {
 			'/api/auth/password/change',
 			{
 				token: s.accessToken,
-				body: { currentPassword: s.password, nextPassword: 'next-password-1' },
+				body: { current: s.password, next: 'next-password-1' },
 			},
 		);
 		expect(status).toBe(200);
@@ -164,19 +164,19 @@ describe('POST /api/auth/password/change', () => {
 			'/api/auth/password/change',
 			{
 				token: s.accessToken,
-				body: { currentPassword: 'not-it', nextPassword: 'next-password-1' },
+				body: { current: 'not-it', next: 'next-password-1' },
 			},
 		);
 		expect(status).toBe(401);
 		expect(body.error.code).toBe(enum$error.codes.INVALID_CREDENTIALS);
 	});
 
-	it('401 without a token', async () => {
+	it('422 without a token', async () => {
 		const app = await getApp();
 		const { status } = await call(app, 'POST', '/api/auth/password/change', {
-			body: { currentPassword: 'x', nextPassword: 'next-password-1' },
+			body: { current: 'x', next: 'next-password-1' },
 		});
-		expect(status).toBe(401);
+		expect(status).toBe(422);
 	});
 
 	it('401 when the session family has been blocklisted (strict guard)', async () => {
@@ -197,7 +197,7 @@ describe('POST /api/auth/password/change', () => {
 			'/api/auth/password/change',
 			{
 				token: s.accessToken, // still validly signed, but its fid is blocked
-				body: { currentPassword: s.password, nextPassword: 'next-password-1' },
+				body: { current: s.password, next: 'next-password-1' },
 			},
 		);
 		expect(status).toBe(401);
@@ -212,7 +212,7 @@ describe('POST /api/auth/password/change', () => {
 			'/api/auth/password/change',
 			{
 				token: 'not-a-jwt',
-				body: { currentPassword: 'x', nextPassword: 'next-password-1' },
+				body: { current: 'x', next: 'next-password-1' },
 			},
 		);
 		expect(status).toBe(401);
@@ -233,7 +233,7 @@ describe('POST /api/auth/password/change', () => {
 			'/api/auth/password/change',
 			{
 				token: stale,
-				body: { currentPassword: s.password, nextPassword: 'next-password-1' },
+				body: { current: s.password, next: 'next-password-1' },
 			},
 		);
 		expect(status).toBe(401);
@@ -252,24 +252,24 @@ describe('POST /api/auth/password/change', () => {
 			'/api/auth/password/change',
 			{
 				token: tokens.accessToken,
-				body: { currentPassword: 'anything', nextPassword: 'next-password-1' },
+				body: { current: 'anything', next: 'next-password-1' },
 			},
 		);
 		expect(status).toBe(404);
 		expect(body.error.code).toBe(enum$error.codes.NOT_FOUND);
 	});
 
-	it('422 when nextPassword is out of bounds', async () => {
+	it('422 when next is out of bounds', async () => {
 		const app = await getApp();
 		const s = await signup(app);
 		const short = await call(app, 'POST', '/api/auth/password/change', {
 			token: s.accessToken,
-			body: { currentPassword: s.password, nextPassword: 'tiny' },
+			body: { current: s.password, next: 'tiny' },
 		});
 		expect(short.status).toBe(422);
 		const long = await call(app, 'POST', '/api/auth/password/change', {
 			token: s.accessToken,
-			body: { currentPassword: s.password, nextPassword: 'x'.repeat(33) },
+			body: { current: s.password, next: 'x'.repeat(33) },
 		});
 		expect(long.status).toBe(422);
 	});

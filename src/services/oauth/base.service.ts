@@ -1,6 +1,5 @@
 import { enum$error } from '@enums/errors.enum';
 import { AppError } from '@services/error.service';
-import { utils$token } from '@utils/token.util';
 
 type ProviderConfig = {
 	url: {
@@ -26,15 +25,14 @@ type ProviderConfig = {
 };
 
 function createProvider(providerConfig: ProviderConfig) {
-	const start = () => {
-		const state = utils$token.random(16);
+	const start = (state: string) => {
 		const url = new URL(providerConfig.url.authorize);
 		url.searchParams.set('client_id', providerConfig.client.id);
 		url.searchParams.set('redirect_uri', providerConfig.url.redirect);
 		url.searchParams.set('scope', providerConfig.scope);
 		url.searchParams.set('response_type', 'code');
 		url.searchParams.set('state', state);
-		return { url: url.toString(), state };
+		return url.toString();
 	};
 
 	const exchange = async (code: string) => {
