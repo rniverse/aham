@@ -3,4 +3,3 @@ node_modules/
 .env.test
 *.log
 src/db/migrations
-src/scripts/

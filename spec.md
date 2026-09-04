@@ -456,9 +456,14 @@ plus `tests/app.test.ts` for cross-cutting concerns (error envelope,
 `x-request-id`). Run with `bun run test` (not bare `bun test` — the `pretest`
 script must fire).
 
-- `pretest` runs `src/scripts/setup-test-db.ts`: creates the `auth_test`
-  database if missing and applies `src/db/migrations` to it via drizzle's
-  programmatic migrator.
+- `pretest` = `bun run db:main generate && bun run db:test:setup`.
+  `db:main generate` (re)creates `src/db/migrations` from `src/db/schema.ts`
+  (no-op when already in sync); `setup-test-db.ts` then creates the
+  `auth_test` database if missing, drops its `public` / `drizzle` schemas,
+  and re-applies the migrations via drizzle's programmatic migrator — a
+  clean deterministic reset each run. `src/db/migrations` and `src/scripts`
+  are both git-ignored, so this pipeline never assumes either survived a
+  fresh checkout.
 - `.env.test` (git-ignored, loaded on top of `.env` because the `test` script
   sets `NODE_ENV=test`) redirects only `DATABASE_URL` to `auth_test` and sets
   `LOG_LEVEL=silent`.
