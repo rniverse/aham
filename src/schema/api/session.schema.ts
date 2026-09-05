@@ -1,6 +1,8 @@
 import { t } from '@rniverse/utils'; // = valibot
 
+const withToken = t.object({ refreshToken: t.string() });
+
 export const schema$session = {
-	refresh: t.object({ refreshToken: t.string() }),
-	revoke: t.object({ refreshToken: t.string() }),
+	refresh: withToken,
+	revoke: withToken,
 };

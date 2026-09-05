@@ -6,7 +6,7 @@
 	"scripts": {
 		"lint": "biome check --write",
 		"start": "bun run src/index.ts",
-		"dev": "bun run --watch src/index.ts",
+		"dev": "bun run --watch --inspect=9009 src/index.ts",
 		"db:main": "drizzle-kit --config drizzle.config.ts",
 		"dbsync:main": "source .env && rm -rf src/db/migrations && bun run db:main introspect && bun run db:main generate && bun run db:main migrate",
 		"generate-keys": "bun run src/scripts/generate-keys.ts",
@@ -23,7 +23,8 @@
 		"@valibot/to-json-schema": "^1.7.1",
 		"drizzle-orm": "^0.45.2",
 		"elysia": "^1.4.30",
-		"postgres": "^3.4.9"
+		"postgres": "^3.4.9",
+		"resend": "^6.26.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.12",

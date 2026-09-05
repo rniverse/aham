@@ -8,8 +8,11 @@ export const oauthAPI = new Elysia({ prefix: '/oauth' })
 	.get(
 		'/:provider/start',
 		async ({ params, query }) => {
-			const { url } = await service$auth.oauth.start(params.provider, query.redirect);
-			return { redirect: url };
+			const { url } = await service$auth.oauth.start(
+				params.provider,
+				query.redirect,
+			);
+			return ok({ redirect: url });
 		},
 		schema$oauth.start,
 	)
@@ -23,12 +26,12 @@ export const oauthAPI = new Elysia({ prefix: '/oauth' })
 					query.state,
 					metaOf(server, request),
 				);
-				const base = result.redirect ?? config.clientURL;
+				const base = result.redirect ?? config.url.client;
 				const url = new URL(base);
 				url.searchParams.set('code', result.code);
 				return redirect(url.toString());
 			} catch (err) {
-				const url = new URL(config.clientURL);
+				const url = new URL(config.url.client);
 				url.searchParams.set(
 					'error',
 					err instanceof AppError ? err.key : 'INTERNAL_ERROR',

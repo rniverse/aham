@@ -8,9 +8,8 @@ import { utils$token } from '@utils/token.util';
 import { and, eq, isNull } from 'drizzle-orm';
 import { service$blocklist } from './blocklist.service';
 import { AppError } from './error.service';
-import { service$user } from './user.service';
 
-type SessionUser = { id: string; email: string };
+type SessionUser = { id: string };
 
 // A stolen family is blocked for a day — comfortably longer than any
 // already-issued 15-minute access token (spec §6).
@@ -34,15 +33,11 @@ async function issue(
 		family_id: fid,
 		user_agent: meta.userAgent ?? null,
 		ip: meta.ip ?? null,
-		expires_at: date().add(config.jwt.refreshTokenTtlDays, 'day').toDate(),
+		expires_at: date().add(config.jwt.ttl.refreshToken, 'day').toDate(),
 		created_at: new Date(),
 	});
 
-	const accessToken = await utils$token.sign({
-		sub: user.id,
-		email: user.email,
-		fid,
-	});
+	const accessToken = await utils$token.sign({ sub: user.id, fid });
 	// `id` is the refresh-token row PK — internal, for the rotation chain only.
 	// `tokens` is the client-facing shape.
 	return { id, tokens: { accessToken, refreshToken: rawToken } };
@@ -71,10 +66,7 @@ async function refresh(rawToken: string, meta: RequestMeta = {}) {
 		throw new AppError(enum$error.key.INVALID_TOKEN);
 	}
 
-	const user = await service$user.find({ id: row.user_id });
-	if (!user) throw new AppError(enum$error.key.INVALID_TOKEN);
-
-	const issued = await issue(user, meta, row.family_id);
+	const issued = await issue({ id: row.user_id }, meta, row.family_id);
 
 	await client
 		.update(refresh_tokens)
@@ -122,7 +114,9 @@ async function revokeAllForUser(userId: string) {
 export const service$session = {
 	issue,
 	refresh,
-	revoke,
-	revokeFamily,
-	revokeAllForUser,
+	revoke: {
+		token: revoke,
+		family: revokeFamily,
+		user: revokeAllForUser,
+	},
 };

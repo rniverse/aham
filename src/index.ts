@@ -22,7 +22,10 @@ export const init = async () => {
 			if (code !== 'VALIDATION') {
 				log.error(error, 'Error occured during request processing');
 			} else {
-				log.error(error.all.map((e: any) => e.message), 'Error occured during request processing');
+				log.error(
+					error.all.map((e: any) => e.message),
+					'Error occured during request processing',
+				);
 			}
 			if (error instanceof AppError) {
 				set.status = error.status_code;

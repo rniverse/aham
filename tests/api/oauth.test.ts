@@ -20,8 +20,8 @@ describe('GET /api/oauth/:provider/start', () => {
 		);
 		expect(res.status).toBe(200);
 
-		const { redirect } = await res.json() as { redirect: string };
-		const url = new URL(redirect);
+		const { data } = (await res.json()) as { data: { redirect: string } };
+		const url = new URL(data.redirect);
 		expect(url.origin).toBe('https://accounts.google.com');
 		expect(url.searchParams.get('response_type')).toBe('code');
 		expect(url.searchParams.get('scope')).toContain('email');
@@ -35,12 +35,16 @@ describe('GET /api/oauth/:provider/start', () => {
 		const spy = mockGoogleOAuth({ email });
 		try {
 			const start = await app.handle(
-				new Request(`http://localhost/api/oauth/google/start?redirect=${encodeURIComponent(custom)}`),
+				new Request(
+					`http://localhost/api/oauth/google/start?redirect=${encodeURIComponent(custom)}`,
+				),
 			);
-			const { redirect } = await start.json() as { redirect: string };
-			const state = stateFromUrl(redirect);
+			const { data } = (await start.json()) as { data: { redirect: string } };
+			const state = stateFromUrl(data.redirect);
 			const cb = await app.handle(
-				new Request(`http://localhost/api/oauth/google/callback?code=fake&state=${state}`),
+				new Request(
+					`http://localhost/api/oauth/google/callback?code=fake&state=${state}`,
+				),
 			);
 			const loc = new URL(cb.headers.get('location') ?? '');
 			expect(loc.origin).toBe(custom);

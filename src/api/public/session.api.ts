@@ -18,7 +18,7 @@ export const sessionAPI = new Elysia({ prefix: '/session' })
 	.post(
 		'/revoke',
 		async ({ body }) => {
-			await service$session.revoke(body.refreshToken);
+			await service$session.revoke.token(body.refreshToken);
 			return ok();
 		},
 		{ body: schema$session.revoke },

@@ -50,7 +50,9 @@ async function pop(key: string) {
 	const client = pg();
 	const [row] = await client
 		.delete(cache_entries)
-		.where(and(eq(cache_entries.key, key), gt(cache_entries.expires_at, new Date())))
+		.where(
+			and(eq(cache_entries.key, key), gt(cache_entries.expires_at, new Date())),
+		)
 		.returning();
 	return row ? row.value : null;
 }

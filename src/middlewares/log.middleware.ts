@@ -19,7 +19,7 @@ export const logger = () =>
 			const { requestId } = cxt$req.withRequestId(custom)();
 			// echo it back so a caller can correlate a response with server logs
 			set.headers['x-request-id'] = requestId;
-			const {method, url} = request;
+			const { method, url } = request;
 
 			log.info(`Request started - [${method}] ${url}`);
 		})
@@ -29,5 +29,7 @@ export const logger = () =>
 			const status = typeof set.status === 'number' ? set.status : 200;
 			const { method, url } = request;
 			const level = status >= 400 ? 'error' : 'info';
-			log[level](`Request completed - [${method}] ${url} - [${status}] — ${ms}ms`);
+			log[level](
+				`Request completed - [${method}] ${url} - [${status}] — ${ms}ms`,
+			);
 		});

@@ -46,6 +46,8 @@ own authorization/permissions for other services.
 - **Lint/format:** Biome, config copied verbatim from the sibling
   `ledger-server` project (tabs, single quotes, 80-col, `preset: "recommended"`,
   `noExplicitAny: off`, `noNonNullAssertion: off`, `organizeImports: on`).
+- **Email:** Resend, via the `resend` npm package. Wraps only what's used
+  today (`send`) — no queueing, retries, or templating layer.
 
 ## 3. Core architecture decision: RS256 + JWKS
 
@@ -90,8 +92,16 @@ Dot-composed, mirroring the route nesting, camelCase-free —
 `auth.signin()`, `auth.invite()`, `auth.invite.revoke()`, `auth.signup()`,
 `auth.password.forgot()`, `auth.password.reset()`, `auth.password.change()`,
 `auth.oauth.start()`, `auth.oauth.callback()`, `auth.oauth.exchange()`,
-`user.me()`, `user.username.change()`, `session.refresh()`,
-`session.revoke()`.
+`user.me()`, `session.refresh()`.
+
+**Exception — grouped by verb, not by route, once a domain has 2+ sibling
+operations under the same verb:** `user.change.username()` /
+`user.change.password()` (route is `user/username/change`, method nesting
+is `change.{username,password}` so both changeable fields sit together);
+`session.revoke.token()` / `session.revoke.family()` / `session.revoke.user()`
+(one route, `session/revoke`, but three distinct revocation scopes as
+sibling methods rather than three positional-argument variants of one
+function).
 
 ### Files — layered, not nested by route
 Split by architectural layer (api / service / util), not by the route tree:
@@ -100,17 +110,18 @@ Split by architectural layer (api / service / util), not by the route tree:
 api/public/*.api.ts        — one file per top-level domain (auth, oauth, session)
 api/protected/*.api.ts     — same domains, only the routes that need a session
 api/index.ts               — consolidator: cors, mounts public + protected
-services/*.service.ts      — auth, invite, user, session, cache, blocklist, error
+services/*.service.ts      — auth, invite, user, session, cache, blocklist, email, error
 services/oauth/base.service.ts       — composable builder
 services/oauth/<provider>.service.ts — config + profile mapping only
 utils/*.util.ts             — token, password, duration (stateless, no DB, no AppError)
 utils/index.ts               — request/response helpers: ipOf/userAgentOf/metaOf, sanitize (via `_.omit`), ok()
 db/schema.ts                 — table defs only; no db/index.ts, no db() accessor
-connections/*.connection.ts   — one per external system
-connections/index.ts           — lifecycle (init/close/health/status) + pg()
+connections/*.connection.ts   — one per external system (postgres, email)
+connections/index.ts           — lifecycle (init/close/health/status) + pg()/mail()
 enums/*.enum.ts + index.ts       — errors, connection-status
 schema/fields.ts               — shared valibot field pipes (email, password, username, name)
-schema/api/*.schema.ts + index.ts — valibot request schemas (auth, session, user)
+schema/api/*.schema.ts + index.ts — valibot request schemas (auth, oauth, session, user)
+schema/guard.schema.ts             — Bearer-scheme header schemas (required + soft) for the auth guards
 middlewares/*.middleware.ts        — log, auth guard (soft / base / strict)
 scripts/generate-keys.ts             — committed source; prints keys, writes nothing
 ```
@@ -160,13 +171,16 @@ not part of its exported surface (carried over from `ledger-server`'s
   gets named intermediate variables even at the cost of extra lines —
   readability over compression.
 - `URL` vs `URI` casing is **not** a single blanket rule: use `URI`
-  (`redirectURI`) when naming the literal OAuth-spec term, use `URL`
-  (`authServiceURL`, `clientURL`) for the service's own general-purpose
-  address fields. In snake_case (DB/JSON), both go fully lowercase
-  (`avatar_url`; `redirect_uri` if the OAuth term were ever persisted).
-  This is deliberately asymmetric with `Id`, which stays lowercase-`d`
-  (`userId`, `reqId`) rather than becoming `ID` — there is no single
-  "acronyms are always capitalized" rule in play here.
+  (`redirectURI`) when naming the literal OAuth-spec term, use `URL` for
+  the service's own general-purpose address fields — *unless* the parent
+  object already disambiguates, in which case the suffix is dropped rather
+  than repeated: `config.url.auth` / `config.url.client`, not
+  `config.url.authURL`. `config.google.redirectURI` keeps its suffix since
+  it isn't nested under a `url` group. In snake_case (DB/JSON), both go
+  fully lowercase (`avatar_url`; `redirect_uri` if the OAuth term were ever
+  persisted). This is deliberately asymmetric with `Id`, which stays
+  lowercase-`d` (`userId`, `reqId`) rather than becoming `ID` — there is no
+  single "acronyms are always capitalized" rule in play here.
 
 ## 5. Database schema
 
@@ -186,11 +200,15 @@ chronologically.
 ## 6. Token & session mechanics
 
 - **Access token:** RS256, 15-minute default TTL (`ACCESS_TOKEN_TTL`),
-  claims `sub` (user id), `email`, `fid` (refresh-token family id). Never
-  individually revocable — deliberately stateless, since a per-token
-  revocation list would defeat the purpose of using JWTs at all (it would
-  make every verification stateful again). A stolen access token's maximum
-  lifetime is capped at 15 minutes by expiry alone.
+  claims `sub` (user id) and `fid` (refresh-token family id) — no `email`
+  claim. Email was in the original claim set but was dropped once it became
+  clear nothing in this codebase ever reads it back off a verified token
+  (every route handler that needs the user's identity uses `sub`); kept out
+  as an unused surface rather than carried "just in case" for a downstream
+  consumer. Never individually revocable — deliberately stateless, since a
+  per-token revocation list would defeat the purpose of using JWTs at all
+  (it would make every verification stateful again). A stolen access
+  token's maximum lifetime is capped at 15 minutes by expiry alone.
 - **Refresh token:** a random, cryptographically secure value
   (`crypto.getRandomValues`, not `Math.random` — `@rniverse/utils`'s own
   `random.ts` was explicitly rejected for this because it's `Math.random`-based
@@ -262,9 +280,9 @@ accepts an invite, and accepting the invite link *is* the proof of inbox
 control — there is no separate email-verification step or endpoint.
 
 - **`auth/invite` `{ email }`** creates one `invites` row (`status:
-  'pending'`), stores only the hash of a random token, and logs/sends the
-  link (`CLIENT_URL?token=…`). It returns `{ email, expiresAt }`. It never
-  issues session tokens and never creates a user.
+  'pending'`), stores only the hash of a random token, and emails the link
+  (`CLIENT_URL?token=…`) via `service$email`. It returns `{ email,
+  expiresAt }`. It never issues session tokens and never creates a user.
   - The route uses `guard.soft`: called with a valid session it sets
     `invited_by` to the caller; called anonymously it's self-signup and
     `invited_by` is null.
@@ -302,7 +320,7 @@ control — there is no separate email-verification step or endpoint.
   *account* isn't usable yet). In practice the only way to hold an
   unverified account is an OAuth sign-in whose provider did not confirm
   the email.
-- **Password reset revokes every session** (`revokeAllForUser`) —
+- **Password reset revokes every session** (`session.revoke.user()`) —
   security-sensitive: an attacker with a live stolen session shouldn't
   survive the legitimate user "securing" the account.
 - **Password change revokes nothing** — deliberately asymmetric with
@@ -333,10 +351,28 @@ control — there is no separate email-verification step or endpoint.
   client: { id, secret }, scope, mapper: { profile } }` — nested `url`/
   `client` objects, `mapper.profile()` rather than a bare `mapProfile`
   function, per explicit request.
+- **`start()` returns JSON, it doesn't redirect itself.** `GET
+  auth/oauth/:provider/start` responds
+  `{ ok: true, data: { redirect: <provider-auth-url> } }` (the normal
+  envelope, §10) rather than issuing an HTTP 302; the caller (browser or
+  app) navigates there itself. This is a change from the original "redirect
+  to provider" decision, made so a non-browser caller gets the URL as data
+  it can act on instead of a redirect response it has to intercept.
+- **Optional post-callback redirect override:** `start` accepts an
+  `?redirect=<url>` query param. When present, it's threaded through the
+  cached CSRF state and, on a successful `callback()`, used as the base URL
+  for the final redirect (`?code=...` appended) instead of the default
+  `CLIENT_URL`. The error path (state mismatch, token-exchange failure,
+  etc.) has no state to recover a custom redirect from, so it always falls
+  back to `CLIENT_URL?error=...`.
 - **CSRF protection:** `start()` generates a `state` value; it's cached
-  (`oauth:state:{state}` → provider name, 10-minute TTL) before redirecting.
-  `callback()` looks the state up, rejects with `OAUTH_STATE_MISMATCH` if
-  missing or mismatched, and deletes it immediately (single-use).
+  (`oauth:state:{state}` → `{ provider, redirect }` JSON, 10-minute TTL,
+  written via a collision-checked acquire-and-retry loop — see `service$cache.acquire`)
+  before the route hands the provider URL back to the caller. `callback()`
+  looks the state up via an atomic pop (one delete-and-return call, not a
+  get followed by a separate delete), rejects with `OAUTH_STATE_MISMATCH`
+  if missing or the provider doesn't match, and — since popping already
+  removed it — the same state can never be presented twice.
 - **Account linking:** if an OAuth callback's email matches an existing
   user, the OAuth account is auto-linked to it — **only if the provider
   confirms the email is verified** (`profile.emailVerified`); otherwise
@@ -351,12 +387,14 @@ control — there is no separate email-verification step or endpoint.
 - **Tokens never appear in the callback redirect URL.** A raw access/
   refresh pair in a URL would leak into browser history, server logs, and
   `Referer` headers. Instead, `callback()` stashes the issued tokens behind
-  a short-lived (60s), single-use random code
-  (`oauth:exchange:{code}`) and redirects with only that code; a separate
-  `POST auth/oauth/exchange` trades the code for the real tokens. This
-  addition wasn't explicitly requested — it was made unilaterally as a
-  security correction while implementing the callback route, and is called
-  out here for visibility.
+  a short-lived (60s), single-use random code (`oauth:exchange:{code}`,
+  written via the same collision-checked acquire-and-retry loop as the CSRF
+  state) and redirects with only that code; a separate `POST
+  auth/oauth/exchange` trades the code for the real tokens via an atomic
+  pop, so a code can be redeemed at most once. This addition wasn't
+  explicitly requested — it was made unilaterally as a security correction
+  while implementing the callback route, and is called out here for
+  visibility.
 
 ## 9. API surface
 
@@ -369,8 +407,8 @@ control — there is no separate email-verification step or endpoint.
 | `POST auth/password/forgot` | public | Silently no-ops on unknown email |
 | `POST auth/password/reset` | public | Revokes all sessions |
 | `POST auth/password/change` | protected (strict) | Leaves sessions alone |
-| `GET auth/oauth/:provider/start` | public | Redirects to provider |
-| `GET auth/oauth/:provider/callback` | public | Redirects to `CLIENT_URL?code=...` (or `?error=...`) |
+| `GET auth/oauth/:provider/start` | public | Returns `{ ok: true, data: { redirect: <provider-url> } }` (JSON, no 302); optional `?redirect=<url>` sets where the callback lands on success |
+| `GET auth/oauth/:provider/callback` | public | Redirects to the `redirect` given at `start` (else `CLIENT_URL`) with `?code=...`; failures always redirect to `CLIENT_URL?error=...` |
 | `POST auth/oauth/exchange` | public | One-time code → real tokens |
 | `GET user/me` | protected | Full profile minus `hash` |
 | `POST user/username/change` | protected | `{ username }`; set-once, 409 if already set |
@@ -402,7 +440,8 @@ Error registry (key → status):
 `VERIFICATION_TOKEN_INVALID`(401), `INVITE_TOKEN_INVALID`(401),
 `INVITE_ALREADY_PENDING`(409), `OAUTH_STATE_MISMATCH`(401),
 `OAUTH_TOKEN_EXCHANGE_FAILED`(502), `OAUTH_PROFILE_FETCH_FAILED`(502),
-`OAUTH_EMAIL_UNVERIFIED`(403), `OAUTH_PROVIDER_UNKNOWN`(404).
+`OAUTH_EMAIL_UNVERIFIED`(403), `OAUTH_PROVIDER_UNKNOWN`(404),
+`EMAIL_SEND_FAILED`(502).
 
 ## 11. CORS
 
@@ -429,6 +468,22 @@ that number. `ACCESS_TOKEN_TTL` keeps its own raw string (parsed by `jose`),
 **Invite:** `INVITE_TOKEN_TTL` (default `1d`) → `config.invite.ttl`
 (seconds).
 
+**Shape:** related env vars are grouped into nested objects rather than
+flat, prefixed properties — `config.url.{auth,client}` (was
+`authServiceURL`/`clientURL`), `config.jwt.key.{private,public,id}` and
+`config.jwt.ttl.{accessToken,refreshToken}` (was flat `jwt.privateKey` /
+`jwt.publicKey` / `jwt.keyId` / `jwt.accessTokenTtl` /
+`jwt.refreshTokenTtlDays`), `config.google.client.{id,secret}` (was
+`google.clientId`/`google.clientSecret`; `google.redirectURI` stays flat —
+see the `URL`/`URI` naming rule in §4). The env var names themselves
+(`AUTH_SERVICE_URL`, `JWT_PRIVATE_KEY`, …) are unchanged; only the TS
+access path moved.
+
+**Resend:** `RESEND_API_KEY` (required) → `config.resend.key`.
+`RESEND_FROM_EMAIL` (optional, defaults to Resend's own sandbox sender
+`onboarding@resend.dev`, which works with no domain verification) →
+`config.resend.from`.
+
 ## 13. Deliberately deferred (not built, not in scope for this version)
 
 - Redis (blocklist/cache is Postgres-only for now, by design, swappable
@@ -443,8 +498,9 @@ that number. `ACCESS_TOKEN_TTL` keeps its own raw string (parsed by `jose`),
   if one-shot bulk is ever needed
 - Any OAuth provider beyond Google (the composition pattern in §8 is the
   intended path for adding more)
-- Real email delivery — invite / password-reset tokens are logged via
-  `log.info`, not emailed, pending a provider decision
+- Email templating/branding — invite and password-reset emails are a
+  single inline HTML string built inline in the service, no shared layout
+  or design system
 - A sweep of expired `invites` rows (expiry is already enforced lazily on
   read; this would only be housekeeping, and belongs in the deferred
   `worker.ts`)
@@ -467,15 +523,20 @@ script must fire).
 - `.env.test` (git-ignored, loaded on top of `.env` because the `test` script
   sets `NODE_ENV=test`) redirects only `DATABASE_URL` to `auth_test` and sets
   `LOG_LEVEL=silent`.
-- `tests/setup.ts` (preloaded via `bunfig.toml`) opens connections once and
-  `TRUNCATE`s every table before each test.
+- `tests/setup.ts` (preloaded via `bunfig.toml`) opens connections once,
+  `TRUNCATE`s every table before each test, and spies `service$email.send`
+  to a resolved no-op for the whole run — `RESEND_API_KEY` falls through
+  from `.env` (`.env.test` only redirects `DATABASE_URL`/`LOG_LEVEL`), so
+  without this every invite/forgot-password test would otherwise fire a
+  real Resend API call under a real key.
 - Routes are exercised through `app.handle(new Request(...))` — no real socket.
   `src/index.ts` exports `init()` and guards its server bootstrap with
   `import.meta.main` so importing it in a test doesn't start listening.
 - `tests/utils.ts` provides the shared harness: `call()`, `signup()` (full
-  invite→signup flow), `oauthFlow()` (stubbed start→callback), fetch stubs for
-  the provider, `utils$token.random` spies to recover logged invite/reset
-  tokens, and direct-DB helpers to age a row (`expireInvite`,
+  invite→signup flow), `oauthFlow()` (stubbed start→callback), fetch stubs
+  for the provider, `utils$token.random` spies to recover the raw
+  invite/reset token that would otherwise only exist inside the email that
+  was sent, and direct-DB helpers to age a row (`expireInvite`,
   `expireRefreshToken`, …) or mint an already-expired access token for cases
   that can't be produced through the API.
 - Coverage is happy-path + error/edge branches per route: validation bounds,
@@ -484,17 +545,6 @@ script must fire).
   hits, deleted-user, and the envelope/`x-request-id` invariants. Not covered:
   `EMAIL_NOT_VERIFIED` on signin (unreachable — only OAuth can leave an
   account unverified, and that path errors before signin is possible).
-
-## 15. Known issues carried from dependencies (not this codebase)
-
-- `@rniverse/utils`'s `lib/utils/datetime.ts` imports
-  `dayjs/plugin/bigintSupport` (lowercase `i`); dayjs has always shipped
-  that file as `bigIntSupport.js` (capital `I`). Breaks on any
-  case-sensitive filesystem. Needs a fix pushed to that repo.
-- `typescript` peer-dependency conflict: `@rniverse/utils` wants `^5`,
-  `@rniverse/connectors` wants `^6`; nothing currently pins a resolution.
-  Runtime-harmless (Bun doesn't invoke `tsc`), but can affect editor
-  type-checking.
 
 ---
 
@@ -505,3 +555,7 @@ script must fire).
   already-verified `user` to `verify({ user, strict: true })`. The guard
   split (`soft` / `base` / `strict`) is the mechanism that lets that one
   route opt in without a strict check leaking onto every protected route.
+- **§10, response envelope** — *resolved.* `GET auth/oauth/:provider/start`
+  used to return `{ redirect: url }` directly, unlike every other
+  successful response. Now wrapped in `ok()` like the rest:
+  `{ ok: true, data: { redirect: url } }`.

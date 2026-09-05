@@ -9,8 +9,8 @@ export const service$oauth$google = oauth$base.create({
 		redirect: config.google.redirectURI,
 	},
 	client: {
-		id: config.google.clientId,
-		secret: config.google.clientSecret,
+		id: config.google.client.id,
+		secret: config.google.client.secret,
 	},
 	scope: 'openid email profile',
 	mapper: {

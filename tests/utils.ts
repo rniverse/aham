@@ -225,8 +225,8 @@ export async function oauthFlow(
 		const start = await app.handle(
 			new Request(`http://localhost/api/oauth/${provider}/start`),
 		);
-		const { redirect } = await start.json() as { redirect: string };
-		const state = stateFromUrl(redirect);
+		const { data } = (await start.json()) as { data: { redirect: string } };
+		const state = stateFromUrl(data.redirect);
 		const cb = await app.handle(
 			new Request(
 				`http://localhost/api/oauth/${provider}/callback?code=fake&state=${state}`,
@@ -328,12 +328,12 @@ export async function expiredAccessToken(claims: {
 	email: string;
 	fid: string;
 }): Promise<string> {
-	const key = await jose.importPKCS8(config.jwt.privateKey, 'RS256');
+	const key = await jose.importPKCS8(config.jwt.key.private, 'RS256');
 	const past = Math.floor(Date.now() / 1000) - 60;
 	return new jose.SignJWT(claims)
-		.setProtectedHeader({ alg: 'RS256', kid: config.jwt.keyId })
+		.setProtectedHeader({ alg: 'RS256', kid: config.jwt.key.id })
 		.setIssuedAt(past - 900)
-		.setIssuer(config.authServiceURL)
+		.setIssuer(config.url.auth)
 		.setExpirationTime(past)
 		.sign(key);
 }

@@ -1,13 +1,15 @@
+import { config } from '@config';
 import { pg } from '@connections';
 import { verification_tokens } from '@db/schema';
 import { enum$error } from '@enums/errors.enum';
-import { date, log, ulid } from '@rniverse/utils';
+import { date, ulid } from '@rniverse/utils';
 import type { RequestMeta } from '@utils';
 import { utils$password } from '@utils/password.util';
 import { type AccessTokenPayload, utils$token } from '@utils/token.util';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { service$blocklist } from './blocklist.service';
 import { service$cache } from './cache.service';
+import { service$email } from './email.service';
 import { AppError } from './error.service';
 import { service$invite } from './invite.service';
 import { service$oauth } from './oauth';
@@ -85,11 +87,13 @@ const password = {
 			created_at: new Date(),
 		});
 
-		// TODO: wire a real email provider — logging the token for now
-		log.info(
-			{ email: user.email, token: rawToken },
-			'Password reset token issued',
-		);
+		const link = `${config.url.client}/reset-password?token=${rawToken}`;
+		await service$email.send({
+			from: config.resend.from,
+			to: user.email,
+			subject: 'Reset your password',
+			html: `<p>Reset your password: <a href="${link}">Reset password</a></p>`,
+		});
 	},
 
 	reset: async (rawToken: string, newPassword: string) => {
@@ -98,11 +102,8 @@ const password = {
 			'password_reset',
 		);
 		const hash = await utils$password.hash(newPassword);
-		const user = await service$user.update(
-			{ id: verification.user_id },
-			{ hash },
-		);
-		await service$session.revokeAllForUser(user.id); // reset ⇒ logout everywhere
+		const user = await service$user.change.password(verification.user_id, hash);
+		await service$session.revoke.user(user.id); // reset ⇒ logout everywhere
 		return user;
 	},
 
@@ -115,7 +116,7 @@ const password = {
 
 		const hash = await utils$password.hash(next);
 		// deliberately no revoke — change leaves other sessions alone
-		return service$user.update({ id }, { hash });
+		return service$user.change.password(id, hash);
 	},
 };
 
@@ -128,7 +129,11 @@ const oauth = {
 		let saved = false;
 		do {
 			state = utils$token.random(16);
-			saved = await service$cache.acquire(`oauth:state:${state}`, JSON.stringify({ provider, redirect }), OAUTH_STATE_TTL_SECONDS);
+			saved = await service$cache.acquire(
+				`oauth:state:${state}`,
+				JSON.stringify({ provider, redirect }),
+				OAUTH_STATE_TTL_SECONDS,
+			);
 		} while (!saved);
 		const url = providerService.start(state);
 		return { url };
@@ -143,7 +148,9 @@ const oauth = {
 		const providerService = getProvider(provider);
 
 		const cached = await service$cache.pop(`oauth:state:${state}`);
-		const parsed = cached ? JSON.parse(cached) as { provider: string; redirect?: string } : null;
+		const parsed = cached
+			? (JSON.parse(cached) as { provider: string; redirect?: string })
+			: null;
 		if (!parsed || parsed.provider !== provider)
 			throw new AppError(enum$error.key.OAUTH_STATE_MISMATCH);
 
@@ -185,7 +192,11 @@ const oauth = {
 		let saved = false;
 		do {
 			ticket = utils$token.random(16);
-			saved = await service$cache.acquire(`oauth:exchange:${ticket}`, JSON.stringify(tokens), OAUTH_EXCHANGE_TTL_SECONDS);
+			saved = await service$cache.acquire(
+				`oauth:exchange:${ticket}`,
+				JSON.stringify(tokens),
+				OAUTH_EXCHANGE_TTL_SECONDS,
+			);
 		} while (!saved);
 		return { code: ticket, redirect: parsed.redirect };
 	},

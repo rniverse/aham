@@ -4,6 +4,7 @@ import {
 	type ConnectionStatus,
 } from '@enums/connection-status.enum';
 import { log } from '@rniverse/utils';
+import { email } from './email.connection';
 import { postgres } from './postgres.connection';
 
 const __connections = { postgres };
@@ -99,3 +100,4 @@ export const connections = {
 
 export const pg = () => postgres.getInstance();
 // redis() added here later — same shape, one more entry in `checks` above
+export const mail = () => email.getInstance();

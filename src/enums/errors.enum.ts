@@ -31,6 +31,7 @@ const list = [
 		403,
 	],
 	['OAUTH_PROVIDER_UNKNOWN', 'Unknown OAuth provider', 404],
+	['EMAIL_SEND_FAILED', 'Failed to send email', 502],
 ] as const;
 
 export type ErrorKey = (typeof list)[number][0];

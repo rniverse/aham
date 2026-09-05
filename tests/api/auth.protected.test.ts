@@ -244,7 +244,7 @@ describe('POST /api/auth/password/change', () => {
 		const app = await getApp();
 		const email = uniqueEmail('oauth');
 		const user = await insertUser({ email, hash: null, emailVerified: true });
-		const { tokens } = await service$session.issue({ id: user.id, email });
+		const { tokens } = await service$session.issue({ id: user.id });
 
 		const { status, body } = await call(
 			app,

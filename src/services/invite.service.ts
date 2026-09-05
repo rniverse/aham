@@ -2,11 +2,12 @@ import { config } from '@config';
 import { pg } from '@connections';
 import { invites } from '@db/schema';
 import { enum$error } from '@enums/errors.enum';
-import { date, log, ulid } from '@rniverse/utils';
+import { date, ulid } from '@rniverse/utils';
 import type { RequestMeta } from '@utils';
 import { utils$password } from '@utils/password.util';
 import { utils$token } from '@utils/token.util';
 import { and, desc, eq, gt } from 'drizzle-orm';
+import { service$email } from './email.service';
 import { AppError } from './error.service';
 import { service$session } from './session.service';
 import { service$user } from './user.service';
@@ -52,16 +53,13 @@ async function create(input: { email: string; invitedBy: string | null }) {
 		})
 		.returning();
 
-	// TODO: wire a real email provider — logging the link for now
-	log.info(
-		{
-			email: invite.email,
-			token: rawToken,
-			link: `${config.clientURL}?token=${rawToken}`,
-			invitedBy: input.invitedBy,
-		},
-		'Invite link issued',
-	);
+	const link = `${config.url.client}?token=${rawToken}`;
+	await service$email.send({
+		from: config.resend.from,
+		to: invite.email,
+		subject: "You've been invited",
+		html: `<p>You've been invited to join. <a href="${link}">Accept your invite</a></p>`,
+	});
 
 	return invite;
 }
