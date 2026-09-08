@@ -4,7 +4,7 @@ import { verification_tokens } from '@db/schema';
 import { enum$error } from '@enums/errors.enum';
 import { date, ulid } from '@rniverse/utils';
 import type { RequestMeta } from '@utils';
-import { utils$password } from '@utils/password.util';
+import { password as utils$password } from '@rniverse/utils/password';
 import { type AccessTokenPayload, utils$token } from '@utils/token.util';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { service$blocklist } from './blocklist.service';

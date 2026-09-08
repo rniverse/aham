@@ -4,7 +4,7 @@ import { invites } from '@db/schema';
 import { enum$error } from '@enums/errors.enum';
 import { date, ulid } from '@rniverse/utils';
 import type { RequestMeta } from '@utils';
-import { utils$password } from '@utils/password.util';
+import { password as utils$password } from '@rniverse/utils/password';
 import { utils$token } from '@utils/token.util';
 import { and, desc, eq, gt } from 'drizzle-orm';
 import { service$email } from './email.service';

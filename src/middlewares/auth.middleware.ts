@@ -1,9 +1,19 @@
 import { enum$error } from '@enums/errors.enum';
+import { cxt$req } from '@rniverse/utils/context';
 import { schema$guard } from '@schema/guard.schema';
 import { service$auth } from '@services/auth.service';
 import { AppError } from '@services/error.service';
 import type { AccessTokenPayload } from '@utils/token.util';
 import Elysia from 'elysia';
+
+// Put the verified user id on the request context so it rides along on logs and
+// on outbound service calls (x-user-id). Only ever set here, post-verification.
+const bindUser = <T extends { sub?: string } | undefined | null>(
+	user: T,
+): T => {
+	if (user?.sub) cxt$req.set('userId', user.sub);
+	return user;
+};
 
 // No token, or a bad token, both resolve to `user: undefined` — never throws.
 // For routes that behave differently when signed in but don't require it.
@@ -14,9 +24,11 @@ const soft = new Elysia({ name: 'auth-guard-soft' })
 		if (!token) return { user: undefined as AccessTokenPayload | undefined };
 		try {
 			return {
-				user: (await service$auth.verify({ token })) as
-					| AccessTokenPayload
-					| undefined,
+				user: bindUser(
+					(await service$auth.verify({ token })) as
+						| AccessTokenPayload
+						| undefined,
+				),
 			};
 		} catch {
 			return { user: undefined as AccessTokenPayload | undefined };
@@ -31,7 +43,7 @@ const base = new Elysia({ name: 'auth-guard-base' })
 	.resolve({ as: 'scoped' }, async ({ headers }) => {
 		const token = headers.authorization;
 		if (!token) throw new AppError(enum$error.key.UNAUTHORIZED);
-		return { user: await service$auth.verify({ token }) };
+		return { user: bindUser(await service$auth.verify({ token })) };
 	});
 
 // Runs after `base`: reuses the already-verified `user` and only adds the
@@ -45,11 +57,13 @@ const strict = new Elysia({ name: 'auth-guard-strict' })
 			const existing: AccessTokenPayload | undefined = ctx.user;
 			if (existing) {
 				await service$auth.verify({ user: existing, strict: true });
-				return { user: existing };
+				return { user: bindUser(existing) };
 			}
 			const token = ctx.headers?.authorization;
 			if (!token) throw new AppError(enum$error.key.UNAUTHORIZED);
-			return { user: await service$auth.verify({ token, strict: true }) };
+			return {
+				user: bindUser(await service$auth.verify({ token, strict: true })),
+			};
 		},
 	);
 

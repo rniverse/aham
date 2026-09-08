@@ -6,6 +6,8 @@ import { openapi } from '@elysiajs/openapi';
 import { enum$error } from '@enums/errors.enum';
 import { logger } from '@middlewares/log.middleware';
 import { log, runWithContext } from '@rniverse/utils';
+import { cxt$req } from '@rniverse/utils/context';
+import { trace$ } from '@rniverse/utils/request';
 import { AppError } from '@services';
 import { toJsonSchema } from '@valibot/to-json-schema';
 import Elysia from 'elysia';
@@ -78,12 +80,27 @@ export const init = async () => {
 		)
 		.use(wellknownAPI) // mounted at root — /.well-known/jwks.json, not under /api
 		.use(api);
+
+	// Wrap `app.handle` itself so every request runs inside its own
+	// AsyncLocalStorage store (via `run()`, not `enterWith`) — no matter whether
+	// it arrives through `Bun.serve` or a direct `app.handle()` in tests.
+	// `trace$.seed` adopts a safe inbound x-request-id; userId is set later by the
+	// auth middleware, never from a header. All args (incl. Bun's `server`) are
+	// forwarded through, so `context.server` / `ipOf` still work.
+	const handle = app.handle.bind(app);
+	app.handle = cxt$req.bindFetch(handle, trace$.seed) as typeof app.handle;
+
 	return app;
 };
 
 export const listen = (app: any) => {
-	app.listen(config.server.port);
-	log.info(`Elysia is running at ${app.server?.hostname}:${app.server?.port}`);
+	const server = Bun.serve({
+		port: config.server.port,
+		hostname: config.server.host,
+		fetch: app.handle, // already context-wrapped in init()
+	});
+	log.info(`Elysia is running at ${server.hostname}:${server.port}`);
+	return server;
 };
 
 const unknownErrorListener = async (e: Error) => {

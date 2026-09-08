@@ -1,5 +1,6 @@
 import { config } from '@config';
 import { jose } from '@rniverse/utils'; // the whole `jose` library, re-exported — no separate dependency needed
+import { randomToken, sha256hex } from '@rniverse/utils/crypto';
 
 const privateKey = await jose.importPKCS8(config.jwt.key.private, 'RS256');
 const publicKey = await jose.importSPKI(config.jwt.key.public, 'RS256');
@@ -39,16 +40,10 @@ async function jwks() {
 	};
 }
 
-function random(bytes = 32) {
-	const buffer = new Uint8Array(bytes);
-	crypto.getRandomValues(buffer);
-	return Buffer.from(buffer).toString('base64url');
-}
-
-async function digest(value: string) {
-	const encoded = new TextEncoder().encode(value);
-	const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
-	return Buffer.from(hashBuffer).toString('hex');
-}
-
-export const utils$token = { sign, verify, jwks, random, digest };
+export const utils$token = {
+	sign,
+	verify,
+	jwks,
+	random: randomToken,
+	digest: sha256hex,
+};
