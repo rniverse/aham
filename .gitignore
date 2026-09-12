@@ -3,3 +3,6 @@ node_modules/
 .env.test
 *.log
 src/db/migrations
+
+# graphify (generated, transient — regenerate via /Users/sage/git/rniverse/CLAUDE.md)
+graphify-out/

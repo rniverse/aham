@@ -1,13 +1,12 @@
 import { config } from '@config';
 import { pg } from '@connections';
 import { refresh_tokens } from '@db/schema';
-import { enum$error } from '@enums/errors.enum';
-import { date, ulid } from '@rniverse/utils';
+import { AppError, enum$error } from '@enums/errors.enum';
+import { date, log, ulid } from '@rniverse/utils';
 import type { RequestMeta } from '@utils';
 import { utils$token } from '@utils/token.util';
 import { and, eq, isNull } from 'drizzle-orm';
 import { service$blocklist } from './blocklist.service';
-import { AppError } from './error.service';
 
 type SessionUser = { id: string };
 
@@ -61,6 +60,10 @@ async function refresh(rawToken: string, meta: RequestMeta = {}) {
 		// again means either a client retry gone wrong, or a stolen copy racing
 		// the legitimate one — either way, kill the whole family rather than
 		// guess which case this is.
+		log.warn(
+			{ familyId: row.family_id, userId: row.user_id },
+			'session.refresh: reused revoked token — family blocked',
+		);
 		await revokeFamily(row.family_id);
 		await service$blocklist.family.add(row.family_id, FAMILY_BLOCK_TTL_SECONDS);
 		throw new AppError(enum$error.key.INVALID_TOKEN);
@@ -73,6 +76,10 @@ async function refresh(rawToken: string, meta: RequestMeta = {}) {
 		.set({ revoked_at: new Date(), replaced_by: issued.id })
 		.where(eq(refresh_tokens.id, row.id));
 
+	log.info(
+		{ userId: row.user_id, familyId: row.family_id },
+		'session.refresh: rotated',
+	);
 	return issued.tokens;
 }
 
@@ -83,6 +90,7 @@ async function revoke(rawToken: string) {
 		.update(refresh_tokens)
 		.set({ revoked_at: new Date() })
 		.where(eq(refresh_tokens.token_hash, tokenHash));
+	log.info('session.revoke: token revoked');
 }
 
 async function revokeFamily(familyId: string) {
@@ -96,6 +104,7 @@ async function revokeFamily(familyId: string) {
 				isNull(refresh_tokens.revoked_at),
 			),
 		);
+	log.info({ familyId }, 'session.revoke: family revoked');
 }
 
 async function revokeAllForUser(userId: string) {
@@ -109,6 +118,7 @@ async function revokeAllForUser(userId: string) {
 				isNull(refresh_tokens.revoked_at),
 			),
 		);
+	log.info({ userId }, 'session.revoke: all sessions revoked');
 }
 
 export const service$session = {

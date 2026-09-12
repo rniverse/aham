@@ -5,12 +5,11 @@ export const config = Object.freeze({
 		return env.get('NODE_ENV', 'development');
 	},
 
-	resend: {
-		get key() {
-			return env.required('RESEND_API_KEY');
-		},
-		get from() {
-			return env.get('RESEND_FROM_EMAIL', 'onboarding@resend.dev');
+	services: {
+		notify: {
+			get url() {
+				return env.required('NOTIFY_SERVICE_URL', 'http://localhost:3001');
+			},
 		},
 	},
 

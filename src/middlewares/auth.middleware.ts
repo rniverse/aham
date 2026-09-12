@@ -1,8 +1,7 @@
-import { enum$error } from '@enums/errors.enum';
+import { AppError, enum$error } from '@enums/errors.enum';
 import { cxt$req } from '@rniverse/utils/context';
 import { schema$guard } from '@schema/guard.schema';
 import { service$auth } from '@services/auth.service';
-import { AppError } from '@services/error.service';
 import type { AccessTokenPayload } from '@utils/token.util';
 import Elysia from 'elysia';
 

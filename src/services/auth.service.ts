@@ -1,17 +1,16 @@
 import { config } from '@config';
 import { pg } from '@connections';
 import { verification_tokens } from '@db/schema';
-import { enum$error } from '@enums/errors.enum';
-import { date, ulid } from '@rniverse/utils';
-import type { RequestMeta } from '@utils';
+import { AppError, enum$error } from '@enums/errors.enum';
+import { date, log, ulid } from '@rniverse/utils';
 import { password as utils$password } from '@rniverse/utils/password';
+import type { RequestMeta } from '@utils';
 import { type AccessTokenPayload, utils$token } from '@utils/token.util';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { service$blocklist } from './blocklist.service';
 import { service$cache } from './cache.service';
-import { service$email } from './email.service';
-import { AppError } from './error.service';
 import { service$invite } from './invite.service';
+import { service$notify } from './notify.service';
 import { service$oauth } from './oauth';
 import { service$session } from './session.service';
 import { service$user } from './user.service';
@@ -57,14 +56,23 @@ async function signin(
 	meta: RequestMeta = {},
 ) {
 	const user = await service$user.find({ email: input.email });
-	if (!user?.hash) throw new AppError(enum$error.key.INVALID_CREDENTIALS);
+	if (!user?.hash) {
+		log.warn({ email: input.email }, 'auth.signin: unknown email');
+		throw new AppError(enum$error.key.INVALID_CREDENTIALS);
+	}
 
 	const isValid = await utils$password.verify(input.password, user.hash);
-	if (!isValid) throw new AppError(enum$error.key.INVALID_CREDENTIALS);
-	if (!user.email_verified_at)
+	if (!isValid) {
+		log.warn({ userId: user.id }, 'auth.signin: wrong password');
+		throw new AppError(enum$error.key.INVALID_CREDENTIALS);
+	}
+	if (!user.email_verified_at) {
+		log.warn({ userId: user.id }, 'auth.signin: email not verified');
 		throw new AppError(enum$error.key.EMAIL_NOT_VERIFIED);
+	}
 
 	const { tokens } = await service$session.issue(user, meta);
+	log.info({ userId: user.id }, 'auth.signin: success');
 	return tokens;
 }
 
@@ -88,12 +96,12 @@ const password = {
 		});
 
 		const link = `${config.url.client}/reset-password?token=${rawToken}`;
-		await service$email.send({
-			from: config.resend.from,
+		await service$notify.send({
 			to: user.email,
 			subject: 'Reset your password',
 			html: `<p>Reset your password: <a href="${link}">Reset password</a></p>`,
 		});
+		log.info({ userId: user.id }, 'auth.password.forgot: reset email sent');
 	},
 
 	reset: async (rawToken: string, newPassword: string) => {
@@ -104,6 +112,10 @@ const password = {
 		const hash = await utils$password.hash(newPassword);
 		const user = await service$user.change.password(verification.user_id, hash);
 		await service$session.revoke.user(user.id); // reset ⇒ logout everywhere
+		log.info(
+			{ userId: user.id },
+			'auth.password.reset: success, sessions revoked',
+		);
 		return user;
 	},
 
@@ -112,11 +124,16 @@ const password = {
 		if (!user?.hash) throw new AppError(enum$error.key.NOT_FOUND);
 
 		const isValid = await utils$password.verify(current, user.hash);
-		if (!isValid) throw new AppError(enum$error.key.INVALID_CREDENTIALS);
+		if (!isValid) {
+			log.warn({ userId: id }, 'auth.password.change: wrong current password');
+			throw new AppError(enum$error.key.INVALID_CREDENTIALS);
+		}
 
 		const hash = await utils$password.hash(next);
 		// deliberately no revoke — change leaves other sessions alone
-		return service$user.change.password(id, hash);
+		const updated = await service$user.change.password(id, hash);
+		log.info({ userId: id }, 'auth.password.change: success');
+		return updated;
 	},
 };
 
@@ -151,8 +168,10 @@ const oauth = {
 		const parsed = cached
 			? (JSON.parse(cached) as { provider: string; redirect?: string })
 			: null;
-		if (!parsed || parsed.provider !== provider)
+		if (!parsed || parsed.provider !== provider) {
+			log.warn({ provider }, 'auth.oauth.callback: state mismatch');
 			throw new AppError(enum$error.key.OAUTH_STATE_MISMATCH);
+		}
 
 		const profile = await providerService.callback(code);
 		let user = await service$user.find({ email: profile.email });
@@ -165,9 +184,18 @@ const oauth = {
 		if (user) {
 			const linked = await service$user.oauth.find(account);
 			if (!linked) {
-				if (!profile.emailVerified)
+				if (!profile.emailVerified) {
+					log.warn(
+						{ userId: user.id, provider },
+						'auth.oauth.callback: provider email not verified, refusing link',
+					);
 					throw new AppError(enum$error.key.OAUTH_EMAIL_UNVERIFIED);
+				}
 				await service$user.oauth.link(user.id, account);
+				log.info(
+					{ userId: user.id, provider },
+					'auth.oauth.callback: linked to existing user',
+				);
 			}
 		} else {
 			user = await service$user.create({
@@ -179,6 +207,10 @@ const oauth = {
 			await service$user.oauth.link(user.id, account);
 			// the account exists now — any outstanding invite link is dead
 			await service$invite.expirePending(profile.email);
+			log.info(
+				{ userId: user.id, provider },
+				'auth.oauth.callback: new user created',
+			);
 		}
 
 		if (!user.email_verified_at)

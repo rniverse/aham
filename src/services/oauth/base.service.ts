@@ -1,5 +1,5 @@
-import { enum$error } from '@enums/errors.enum';
-import { AppError } from '@services/error.service';
+import { AppError, enum$error } from '@enums/errors.enum';
+import { log } from '@rniverse/utils';
 
 type ProviderConfig = {
 	url: {
@@ -50,8 +50,13 @@ function createProvider(providerConfig: ProviderConfig) {
 				code,
 			}),
 		});
-		if (!response.ok)
+		if (!response.ok) {
+			log.error(
+				{ status: response.status },
+				'oauth.exchange: token exchange failed',
+			);
 			throw new AppError(enum$error.key.OAUTH_TOKEN_EXCHANGE_FAILED);
+		}
 		return response.json();
 	};
 
@@ -59,8 +64,13 @@ function createProvider(providerConfig: ProviderConfig) {
 		const response = await fetch(providerConfig.url.userinfo, {
 			headers: { authorization: `Bearer ${accessToken}` },
 		});
-		if (!response.ok)
+		if (!response.ok) {
+			log.error(
+				{ status: response.status },
+				'oauth.profile: profile fetch failed',
+			);
 			throw new AppError(enum$error.key.OAUTH_PROFILE_FETCH_FAILED);
+		}
 		const raw = await response.json();
 		return providerConfig.mapper.profile(raw);
 	};

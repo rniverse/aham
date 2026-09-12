@@ -1,14 +1,13 @@
 import { config } from '@config';
 import { pg } from '@connections';
 import { invites } from '@db/schema';
-import { enum$error } from '@enums/errors.enum';
-import { date, ulid } from '@rniverse/utils';
-import type { RequestMeta } from '@utils';
+import { AppError, enum$error } from '@enums/errors.enum';
+import { date, log, ulid } from '@rniverse/utils';
 import { password as utils$password } from '@rniverse/utils/password';
+import type { RequestMeta } from '@utils';
 import { utils$token } from '@utils/token.util';
 import { and, desc, eq, gt } from 'drizzle-orm';
-import { service$email } from './email.service';
-import { AppError } from './error.service';
+import { service$notify } from './notify.service';
 import { service$session } from './session.service';
 import { service$user } from './user.service';
 
@@ -54,12 +53,12 @@ async function create(input: { email: string; invitedBy: string | null }) {
 		.returning();
 
 	const link = `${config.url.client}?token=${rawToken}`;
-	await service$email.send({
-		from: config.resend.from,
+	await service$notify.send({
 		to: invite.email,
 		subject: "You've been invited",
 		html: `<p>You've been invited to join. <a href="${link}">Accept your invite</a></p>`,
 	});
+	log.info({ inviteId: invite.id }, 'invite.create: sent');
 
 	return invite;
 }
@@ -121,6 +120,10 @@ async function accept(
 		.where(eq(invites.id, invite.id));
 
 	const { tokens } = await service$session.issue(user, meta); // auto-issue
+	log.info(
+		{ userId: user.id, inviteId: invite.id },
+		'invite.accept: user created',
+	);
 	return tokens;
 }
 
@@ -142,6 +145,7 @@ async function revoke(input: { email: string; invitedBy: string }) {
 
 	// no row ⇒ not found, not the owner, or not pending — don't disclose which
 	if (!row) throw new AppError(enum$error.key.NOT_FOUND);
+	log.info({ inviteId: row.id }, 'invite.revoke: revoked');
 	return row;
 }
 

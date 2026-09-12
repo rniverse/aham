@@ -1,9 +1,8 @@
 import { pg } from '@connections';
 import { oauth_accounts, users } from '@db/schema';
-import { enum$error } from '@enums/errors.enum';
+import { AppError, enum$error } from '@enums/errors.enum';
 import { ulid } from '@rniverse/utils';
 import { and, eq, isNull } from 'drizzle-orm';
-import { AppError } from './error.service';
 
 type FindQuery = { id: string } | { email: string } | { username: string };
 

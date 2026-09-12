@@ -1,4 +1,4 @@
-import { sync$seq } from '@rniverse/utils';
+import { createErrorEnum } from '@rniverse/shared/error';
 
 const list = [
 	['NOT_FOUND', 'Resource not found', 404],
@@ -34,26 +34,16 @@ const list = [
 	['EMAIL_SEND_FAILED', 'Failed to send email', 502],
 ] as const;
 
-export type ErrorKey = (typeof list)[number][0];
+const { key, messages, codes, status, spec, AppError } = createErrorEnum(list);
 
-const messages = Object.fromEntries(list.map(([k, msg]) => [k, msg])) as Record<
-	ErrorKey,
-	string
->;
-const status = Object.fromEntries(list.map(([k, , s]) => [k, s])) as Record<
-	ErrorKey,
-	number
->;
-const get_next_code = sync$seq.get({ type: 'code', length: 10, radix: 10 });
-const codes = Object.fromEntries(
-	list.map(([k]) => [k, get_next_code()]),
-) as Record<ErrorKey, string>;
-const key = Object.keys(messages).reduce(
-	(acc, k) => {
-		acc[k as ErrorKey] = k as ErrorKey;
-		return acc;
-	},
-	{} as Record<ErrorKey, ErrorKey>,
-);
-
+export type ErrorKey = keyof typeof key;
 export const enum$error = { key, messages, codes, status };
+export { AppError };
+
+// What createApp()'s `errors` option needs, ready-built — see src/index.ts.
+export const BOOTSTRAP_ERRORS = {
+	AppError,
+	NOT_FOUND: spec('NOT_FOUND'),
+	VALIDATION_FAILED: spec('VALIDATION_FAILED'),
+	INTERNAL_ERROR: spec('INTERNAL_ERROR'),
+};
