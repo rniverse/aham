@@ -46,8 +46,35 @@ own authorization/permissions for other services.
 - **Lint/format:** Biome, config copied verbatim from the sibling
   `ledger-server` project (tabs, single quotes, 80-col, `preset: "recommended"`,
   `noExplicitAny: off`, `noNonNullAssertion: off`, `organizeImports: on`).
-- **Email:** Resend, via the `resend` npm package. Wraps only what's used
-  today (`send`) — no queueing, retries, or templating layer.
+- **Email: none.** `aham` has no email provider of its own — **revised from
+  an earlier version of this section**, which had it calling Resend
+  directly. It now calls `POST /api/notification/send/sync` on the `notify`
+  service instead (`service$notify.send()` in `notify.service.ts`), which
+  is the one thing that still talks to Resend (see `notify`'s spec §1,
+  §2). See §12 for the config that replaced `RESEND_API_KEY`/
+  `RESEND_FROM_EMAIL`.
+- **Shared libs (cross-service), `@rniverse/shared`:** a fifth workspace
+  package, extracted mid-build once `aham` and `notify` were found
+  hand-rolling the same thing verbatim — see the workspace root's
+  `/Users/sage/git/rniverse/CLAUDE.md` (`## shared` section) for the full
+  rationale. `aham` uses:
+  - `createRegistry` — connection lifecycle (postgres) and the named HTTP
+    client to `notify` (`http().get('notify')`), declared as config and
+    connected by one `init()` call. Not used: the Kafka piece — `aham`
+    doesn't talk to Kafka.
+  - `createApp` / `listen` / `boot` / `registerShutdown` — the Elysia app
+    shell and graceful shutdown, including the exact
+    `if (import.meta.main) { ... }` boot sequence, which was
+    byte-identical between `aham` and `notify` before the extraction.
+  - `createErrorEnum` — the `[key, message, status]` list → `AppError`
+    class + sequential-code generator pattern (§10's error registry is
+    still `aham`'s own list; only the mechanism that builds `AppError` from
+    it moved).
+  - The request-logging middleware (path-only, no querystring — the OAuth
+    callback route carries `code`/`state` as query params, and those must
+    never land in logs).
+  `connections()`, `http()` are getters, not plain properties, matching the
+  `pg()` convention already used for shared instances.
 
 ## 3. Core architecture decision: RS256 + JWKS
 
@@ -110,19 +137,19 @@ Split by architectural layer (api / service / util), not by the route tree:
 api/public/*.api.ts        — one file per top-level domain (auth, oauth, session)
 api/protected/*.api.ts     — same domains, only the routes that need a session
 api/index.ts               — consolidator: cors, mounts public + protected
-services/*.service.ts      — auth, invite, user, session, cache, blocklist, email, error
+services/*.service.ts      — auth, invite, user, session, cache, blocklist, notify
 services/oauth/base.service.ts       — composable builder
 services/oauth/<provider>.service.ts — config + profile mapping only
 utils/*.util.ts             — token, password, duration (stateless, no DB, no AppError)
 utils/index.ts               — request/response helpers: ipOf/userAgentOf/metaOf, sanitize (via `_.omit`), ok()
 db/schema.ts                 — table defs only; no db/index.ts, no db() accessor
-connections/*.connection.ts   — one per external system (postgres, email)
-connections/index.ts           — lifecycle (init/close/health/status) + pg()/mail()
-enums/*.enum.ts + index.ts       — errors, connection-status
+connections/postgres.connection.ts — the one external connector aham owns directly
+connections/index.ts           — lifecycle (init/close/health/status) + pg()/http() (`http().get('notify')` is the named client to the `notify` service, see §2)
+enums/*.enum.ts + index.ts       — errors
 schema/fields.ts               — shared valibot field pipes (email, password, username, name)
 schema/api/*.schema.ts + index.ts — valibot request schemas (auth, oauth, session, user)
 schema/guard.schema.ts             — Bearer-scheme header schemas (required + soft) for the auth guards
-middlewares/*.middleware.ts        — log, auth guard (soft / base / strict)
+middlewares/auth.middleware.ts     — auth guard (soft / base / strict); request-logging is now `@rniverse/shared`'s, see §2
 scripts/generate-keys.ts             — committed source; prints keys, writes nothing
 ```
 
@@ -281,7 +308,7 @@ control — there is no separate email-verification step or endpoint.
 
 - **`auth/invite` `{ email }`** creates one `invites` row (`status:
   'pending'`), stores only the hash of a random token, and emails the link
-  (`CLIENT_URL?token=…`) via `service$email`. It returns `{ email,
+  (`CLIENT_URL?token=…`) via `service$notify`. It returns `{ email,
   expiresAt }`. It never issues session tokens and never creates a user.
   - The route uses `guard.soft`: called with a valid session it sets
     `invited_by` to the caller; called anonymously it's self-signup and
@@ -479,10 +506,11 @@ see the `URL`/`URI` naming rule in §4). The env var names themselves
 (`AUTH_SERVICE_URL`, `JWT_PRIVATE_KEY`, …) are unchanged; only the TS
 access path moved.
 
-**Resend:** `RESEND_API_KEY` (required) → `config.resend.key`.
-`RESEND_FROM_EMAIL` (optional, defaults to Resend's own sandbox sender
-`onboarding@resend.dev`, which works with no domain verification) →
-`config.resend.from`.
+**Notify service:** `NOTIFY_SERVICE_URL` (optional, defaults to
+`http://localhost:3001`) → `config.services.notify.url`, wired into
+`createRegistry`'s `http:` array as the named client `'notify'`
+(`connections/index.ts`). `service$notify.send()` looks it up via
+`http().get('notify')` — see §2.
 
 ## 13. Deliberately deferred (not built, not in scope for this version)
 
@@ -524,11 +552,13 @@ script must fire).
   sets `NODE_ENV=test`) redirects only `DATABASE_URL` to `auth_test` and sets
   `LOG_LEVEL=silent`.
 - `tests/setup.ts` (preloaded via `bunfig.toml`) opens connections once,
-  `TRUNCATE`s every table before each test, and spies `service$email.send`
-  to a resolved no-op for the whole run — `RESEND_API_KEY` falls through
-  from `.env` (`.env.test` only redirects `DATABASE_URL`/`LOG_LEVEL`), so
-  without this every invite/forgot-password test would otherwise fire a
-  real Resend API call under a real key.
+  `TRUNCATE`s every table before each test, and spies `service$notify.send`
+  to a resolved stub (`{status: 'sent', id: 'test-email-id'}`) for the whole
+  run — without this every invite/forgot-password test would otherwise fire
+  a real HTTP call to `NOTIFY_SERVICE_URL`, hitting a live `notify` service
+  (and, through it, a real Resend send) instead of asserting in isolation.
+  A test that needs to assert on the call itself re-spies `service$notify`
+  locally.
 - Routes are exercised through `app.handle(new Request(...))` — no real socket.
   `src/index.ts` exports `init()` and guards its server bootstrap with
   `import.meta.main` so importing it in a test doesn't start listening.

@@ -31,7 +31,7 @@ async function send(input: SendInput) {
 	}
 	try {
 		const response = await client.post<SendResponse>(
-			'/notification/send/sync',
+			'/api/notification/send/sync',
 			{
 				body: {
 					channel: 'email',
