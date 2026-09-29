@@ -5,6 +5,12 @@ export const config = Object.freeze({
 		return env.get('NODE_ENV', 'development');
 	},
 
+	// Every connection's client name (Postgres `application_name`) —
+	// required, the connectors have no default.
+	get appName() {
+		return env.required('INSTANCE_NAME');
+	},
+
 	services: {
 		notify: {
 			get url() {

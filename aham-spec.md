@@ -22,9 +22,10 @@ own authorization/permissions for other services.
   hitting Bun-incompatibility there on a different project.
 - **Framework:** Elysia
 - **Database:** PostgreSQL, via Drizzle ORM + postgres-js, accessed through
-  `@rniverse/connectors`' `SQLConnector` (confirmed: that connector uses
-  `drizzle-orm/postgres-js` + the `postgres` npm package under the hood,
-  despite its own README suggesting a native `bun:SQL` driver).
+  `@rniverse/connectors/postgres`' `PostgresConnector` (`drizzle-orm/
+  postgres-js` + the `postgres` npm package). Its `appName` (Postgres
+  `application_name`) comes from the required `INSTANCE_NAME` env var via
+  `config.appName` — the connector has no default.
 - **Shared libs:** `@rniverse/utils` (private) for `log`, `ulid`/`uuid`,
   `sync$seq`, `boundedParseInt`/`safeParseInt`, its `_` re-export (es-toolkit,
   lodash-compatible — used for `_.omit` in `sanitize`), its `date` re-export
@@ -505,6 +506,9 @@ flat, prefixed properties — `config.url.{auth,client}` (was
 see the `URL`/`URI` naming rule in §4). The env var names themselves
 (`AUTH_SERVICE_URL`, `JWT_PRIVATE_KEY`, …) are unchanged; only the TS
 access path moved.
+
+**Instance name:** `INSTANCE_NAME` (required) → `config.appName`, passed to
+`PostgresConnector` as `appName` (`connections/postgres.connection.ts`).
 
 **Notify service:** `NOTIFY_SERVICE_URL` (optional, defaults to
 `http://localhost:3001`) → `config.services.notify.url`, wired into
